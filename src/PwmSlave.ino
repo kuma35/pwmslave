@@ -2,7 +2,7 @@
 // packet version.
 
 // short packet
-// 'EF','65', <<Flag>>, <<ID>>, <<addr>>, <<len>>, <<count>>, <<data>>..., <<<sum>>
+// 'EF','65', <<Flag>>, <<addr>>, <<len>>, <<count>>, <<data>>..., <<<sum>>
 // Header:EF65 :-)
 // Flag:
 // ID: 0
@@ -51,8 +51,15 @@
 #define RESP_SIZE 32
 #define SERVO_VOLUME 2
 
+// send packet flags
 #define FLAG_ACK 0x01
+#define FLAG_MEMORY 0x03
 #define FLAG_FLASH 0x40
+
+// response packet flags
+#define ERR_PACKET 0x02
+#define WRN_UNDER_PULSE 0x01
+#define WRN_OVER_PULSE  0x04
 
 #define EEPROM_BASE 0
 #define EEPROM_I2C_ADDR	0	// NO USE
@@ -67,6 +74,7 @@
 #define RAM_ATTACH_1 12
 #define RAM_PULSE_0  13
 #define RAM_PULSE_1  15
+#define MEMORY_LAST  17
 
 #ifdef DEBUG
 SoftwareSerial MySerial(2, 3);
@@ -79,6 +87,7 @@ unsigned char Resp[RESP_SIZE];
 
 
 int Recv_index = 0;
+int Resp_index = 0;
 
 int get_servo_pin(int id) {
   switch (id) {
@@ -146,13 +155,24 @@ int recv_to_memory(unsigned char *recvp, int len, int addr, unsigned char memory
 }
 
 
-
 void drop_packet(void) {
+  int c;
+#ifdef DEBUG
+  MySerial.print(F("DROP PACKET:"));
+#endif
   while (Serial.available() > 0) {
     delay(10);
-    Serial.read();
+    c = Serial.read();
+#ifdef DEBUG
+    MySerial.print(c, HEX);
+    MySerial.print(F(","));
+#endif
   }
+#ifdef DEBUG
+  MySerial.println(F(""));
+#endif
 }
+
 
 int data_recv(int bytes, unsigned char *datap) {
   for (int index = 0; index < bytes ; index++ ) {
@@ -174,7 +194,26 @@ void memory_dump(void) {
   }
   MySerial.println(F(""));
 }
+
+void recv_dump(void) {
+  for (int i = 0; i< RECV_SIZE; i++) {
+    MySerial.print(Recv[i], HEX);
+    //print_hex(Memory[i]);
+    MySerial.print(F(","));
+  }
+  MySerial.println(F(""));
+}
 #endif
+
+void clear_recv(void) {
+  for (int i =0; i < RECV_SIZE; i++) {
+    Recv[i] = '\0';
+  }
+}
+
+void build_resp(void) {
+  
+}
 
 void setup()
 {
@@ -182,6 +221,12 @@ void setup()
   MySerial.begin(9600);
   MySerial.println("NOW DEBUGGING");
 #endif
+  // set Resp header
+  Resp[0] = 0xDE;
+  Resp[1] = 0x10;
+  Resp[2] = 0x00;	// FLag...0;all green.
+  Resp_index = 3;
+  // 
   Serial.begin(9600);
   // ROM to RAM
   for(int i = EEPROM_BASE; i < EEPROM_LAST; i++) {
@@ -194,44 +239,37 @@ void setup()
 
 void loop()
 {
-  int data = -1;
   if (Serial.available() > 0) {
     delay(10);
+    clear_recv();
     Recv_index = 0;
-    if (!data_recv(7, Recv+Recv_index)) {
+    if (!data_recv(6, Recv+Recv_index)) {
       drop_packet();
       return;
     }
 #ifdef DEBUG
     MySerial.print(F("read header:"));
-    memory_dump();
+    recv_dump();
 #endif
     if (Recv[0] != 0xEF || Recv[1] != 0x65) {
       drop_packet();
+      Resp[2] |= ERR_PACKET;
+      Serial.write(Resp, Resp_index);
       return;
     }
-    if (Recv[2] & FLAG_ACK) {
+    Recv_index += 6;
+    if (!data_recv(Recv[4], Recv+Recv_index)) {
       drop_packet();
-      Serial.write(0x07);
+      Resp[2] |= ERR_PACKET;
+      Serial.write(Resp, Resp_index);
       return;
     }
-    if (Recv[2] & FLAG_FLASH) {
-      drop_packet();
-      for (int adr; adr < EEPROM_LAST; adr++) {
-	if (EEPROM.read(adr) != Memory[adr]) {
-	  EEPROM.write(adr, Memory[adr]);
-	}
-      }
-    }
-    Recv_index += 7;
-    if (!data_recv(Recv[5], Recv+Recv_index)) {
-      drop_packet();
-      return;
-    }
-    recv_to_memory(Recv+7, Recv[4], Recv[5], Memory);
-    Recv_index += Recv[5];
+    recv_to_memory(Recv+7, Recv[3], Recv[4], Memory);
+    Recv_index += Recv[4];
     if (!data_recv(1, Recv+Recv_index)) {
       drop_packet();
+      Resp[2] |= ERR_PACKET;
+      Serial.write(Resp, Resp_index);
       return;
     }
 #ifdef DEBUG
@@ -239,18 +277,39 @@ void loop()
     MySerial.println(Recv_index);
     MySerial.print(F("recv packet:"));
     memory_dump();
-    MySerial.print(F("get_checksum"));
+    MySerial.print(F("get_checksum:"));
     MySerial.println(get_checksum(Recv+3, Recv_index - 1));
 #endif
     if (Recv[Recv_index] != get_checksum(Recv+3, Recv_index - 1)) {
       drop_packet();
+      Resp[2] |= ERR_PACKET;
+      Serial.write(Resp, Resp_index);
       return;
     }
+    //
+    if (Recv[2] & FLAG_ACK) {
+      Serial.write(0x07);
+      return;
+    }
+    if (Recv[2] & FLAG_FLASH) {
+      for (int adr =0; adr < EEPROM_LAST; adr++) {
+	if (EEPROM.read(adr) != Memory[adr]) {
+	  EEPROM.write(adr, Memory[adr]);
+	}
+      }
+      Serial.write(Resp, Resp_index);
+    }
+    if (Recv[2] & FLAG_MEMORY) {
+      for (int adr =0; adr < MEMORY_LAST; adr++) {
+	
+      }
+    }
+    
   }
   // memory check and run
   for (int servo_id = 0; servo_id < 2; servo_id++) {
-    int pin = get_attach(servo_id);
-    if (pin != 0) {
+    int flag = get_attach(servo_id);
+    if (flag != 0) {
       if (!Sv[servo_id].attached()) {
 	Sv[servo_id].attach(pin);
       }

@@ -1,0 +1,4 @@
+board-model = nano328
+#arduino-dist = /home/hideo/.arduino/arduino-1.0.5
+#serial-port = /dev/ttyUSB1
+
