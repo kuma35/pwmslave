@@ -1,0 +1,3 @@
+board-model = nano328
+serial-port = /dev/ttyN328P
+
