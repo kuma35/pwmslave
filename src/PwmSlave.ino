@@ -315,7 +315,7 @@ void loop()
 #ifdef DEBUG
       resp_dump();
 #endif
-      Serial.write(Resp, Resp_index);
+      Serial.write(Resp, R_LEN+2);
 #ifdef DEBUG
       MySerial.println("Err Recv HDRSIZE");
 #endif
@@ -331,7 +331,7 @@ void loop()
 #ifdef DEBUG
       resp_dump();
 #endif
-      Serial.write(Resp, Resp_index);
+      Serial.write(Resp, R_LEN+2);
 #ifdef DEBUG
       MySerial.println("Err Recv HDR");
 #endif
@@ -345,7 +345,7 @@ void loop()
 #ifdef DEBUG
       resp_dump();
 #endif
-      Serial.write(Resp, Resp_index);
+      Serial.write(Resp, R_LEN+2);
 #ifdef DEBUG
       MySerial.println("Err Recv DATA");
 #endif
@@ -360,7 +360,7 @@ void loop()
 #ifdef DEBUG
       resp_dump();
 #endif
-      Serial.write(Resp, Resp_index);
+      Serial.write(Resp, R_LEN+2);
 #ifdef DEBUG
       MySerial.println("Err Recv SUM");
 #endif
@@ -381,7 +381,7 @@ void loop()
 #ifdef DEBUG
       resp_dump();
 #endif
-      Serial.write(Resp, Resp_index);
+      Serial.write(Resp, R_LEN+2);
 #ifdef DEBUG
       MySerial.println("Err checksum");
 #endif
@@ -457,6 +457,6 @@ void loop()
 #ifdef DEBUG
     resp_dump();
 #endif
-    Serial.write(Resp, Resp_index);
+    Serial.write(Resp, Resp_index+1);
   }
 }
