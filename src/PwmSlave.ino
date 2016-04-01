@@ -183,8 +183,8 @@ int get_checksum(unsigned char *datap, int len) {
 //     2; addr + len over MEMORY_SIZE. valid data copy is only in Memory addr.
 int recv_to_memory(unsigned char *recvp,	// recv[] <<data>> position
 		   int len,	// data length
-		   int addr,	// write start addr
-		   unsigned char memory[]){
+		   unsigned char memory[],
+		   int addr) {	// memory addr
   int ret = 0;
   if (addr > MEMORY_SIZE) {
     ret = 1;
@@ -195,6 +195,13 @@ int recv_to_memory(unsigned char *recvp,	// recv[] <<data>> position
     len = MEMORY_SIZE - addr;
   }
   for (int i = 0; i < len; i++) {
+    #ifdef DEBUG
+    MySerial.print(F("memory["));
+    MySerial.print(addr+i);
+    MySerial.print(F("]="));
+    MySerial.print(recvp[i]);
+    MySerial.print(F(","));
+    #endif
     memory[addr+i] = recvp[i];
   }
   return ret;
@@ -286,12 +293,6 @@ void setup()
   MySerial.begin(9600);
   //MySerial.println("NOW DEBUGGING20160328");
 #endif
-  // set Resp header( minimum resp packet)
-  Resp[R_HEADER] = R_SIG1;
-  Resp[R_HEADER+1] = R_SIG2;
-  Resp[R_FLAG] = 0x00;	// FLag...0;all green.
-  Resp[R_ADDR] = 0;
-  Resp[R_LEN] = 0;
   // 
   memset(Memory, 0, sizeof(Memory));	// clear Memory
   // ROM to RAM
@@ -308,16 +309,24 @@ void loop()
 {
   if (Serial.available() > 0) {
     delay(10);
+  // set Resp header( minimum resp packet)
+    Resp[R_HEADER] = R_SIG1;
+    Resp[R_HEADER+1] = R_SIG2;
+    Resp[R_FLAG] = 0x00;	// FLag...0;all green.
+    Resp[R_ADDR] = 0;
+    Resp[R_LEN] = 0;
     #ifdef DEBUG
     MySerial.print(F("========== Serial.available:"));
     MySerial.println(Serial.available());
     #endif
     clear_recv();
     Recv_index = 0;
-    if (data_recv(P_HDR_LEN, Recv+Recv_index) != P_HDR_LEN) {
+    if (data_recv(P_HDR_LEN, Recv+Recv_index) == P_HDR_LEN) {
+      Recv_index += P_HDR_LEN;
+    } else {
       drop_packet();
       Resp[R_FLAG] |= ERR_PACKET;
-      Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_DATA-P_FLAG);
 #ifdef DEBUG
       resp_dump();
 #endif
@@ -333,7 +342,7 @@ void loop()
     if (Recv[P_HEADER] != P_SIG1 || Recv[P_HEADER+1] != P_SIG2) {
       drop_packet();
       Resp[2] |= ERR_PACKET;
-      Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_DATA-R_FLAG);
 #ifdef DEBUG
       resp_dump();
 #endif
@@ -343,11 +352,12 @@ void loop()
 #endif
       return;
     }
-    Recv_index += P_HDR_LEN;
-    if (data_recv(Recv[P_LEN], Recv+Recv_index) != Recv[P_LEN]) {
+    if (data_recv(Recv[P_LEN], Recv+Recv_index) == Recv[P_LEN]) {
+      Recv_index = P_DATA + Recv[P_LEN];
+    } else {
       drop_packet();
       Resp[R_FLAG] |= ERR_PACKET;
-      Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_DATA-R_FLAG);
 #ifdef DEBUG
       resp_dump();
 #endif
@@ -357,12 +367,26 @@ void loop()
 #endif
       return;
     }
-    recv_to_memory(Recv+P_DATA, Recv[P_ADDR], Recv[P_LEN], Memory);
-    Recv_index = P_DATA + Recv[P_LEN];
-    if (data_recv(1, Recv+Recv_index) != 1) {
+    switch (recv_to_memory(Recv+P_DATA,
+			   Recv[P_LEN],
+			   Memory,
+			   Recv[P_ADDR])) {
+    case 0: // no error
+      break;
+    case 1:
+    case 2:
       drop_packet();
       Resp[R_FLAG] |= ERR_PACKET;
-      Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_DATA-R_FLAG);
+      Serial.write(Resp, R_LEN+2);
+      return;
+    }
+    if (data_recv(1, Recv+Recv_index) == 1) {
+      Recv_index += 1;
+    } else {
+      drop_packet();
+      Resp[R_FLAG] |= ERR_PACKET;
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_DATA-R_FLAG);
 #ifdef DEBUG
       resp_dump();
 #endif
@@ -373,17 +397,19 @@ void loop()
       return;
     }
 #ifdef DEBUG
+    recv_dump();
     MySerial.print(F("Recv_index:"));
     MySerial.println(Recv_index);
-    recv_dump();
+    MySerial.print(F("Recv checksum:"));
+    MySerial.println(Recv[Recv_index-1]);
     MySerial.print(F("get_checksum:"));
-    MySerial.println(get_checksum(Recv+P_ADDR, Recv_index - 1));
+    MySerial.println(get_checksum(Recv+P_FLAG, Recv_index - 1 - P_FLAG));
     memory_dump();
 #endif
-    if (Recv[Recv_index] != get_checksum(Recv+P_ADDR, Recv_index - 1)) {
+    if (Recv[Recv_index-1] != get_checksum(Recv+P_FLAG, Recv_index - 1 - P_FLAG)) {
       drop_packet();
       Resp[R_FLAG] |= ERR_PACKET;
-      Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
+      Resp[R_LEN+1] = get_checksum(Resp+R_FLAG, R_FLAG-R_LEN);
 #ifdef DEBUG
       resp_dump();
 #endif
@@ -410,7 +436,7 @@ void loop()
       }
       Resp[R_ADDR] = 0;
       Resp[R_LEN] = 0;
-      Resp[R_DATA] = get_checksum(Resp+P_ADDR, R_DATA - 1);
+      Resp[R_DATA] = get_checksum(Resp+P_FLAG, R_DATA - R_FLAG);
       Resp_index = R_DATA + 1;
       //#ifdef DEBUG
       //      resp_dump();
@@ -425,7 +451,7 @@ void loop()
 	Resp[R_DATA+addr] = Memory[addr];
       }
       Resp_index = R_DATA + MEMORY_SIZE;
-      Resp[Resp_index] = get_checksum(Resp+P_ADDR, Resp_index-1);
+      //Resp[Resp_index] = get_checksum(Resp+R_FLAG, Resp_index-R_FLAG);
       //#ifdef DEBUG
       //      resp_dump();
       //#endif
@@ -452,10 +478,11 @@ void loop()
 	int min = get_servo_min(servo_id);
 	int max = get_servo_max(servo_id);
 	if (pulse < min) {
-	  Resp[R_FLAG] |= WRN_UNDER_PULSE
+	  Resp[R_FLAG] |= WRN_UNDER_PULSE;
 	  pulse = min;
 	} else if ( pulse > max) {
 	  pulse = max;
+	  Resp[R_FLAG] |= WRN_OVER_PULSE;
 	}
 	Sv[servo_id].writeMicroseconds(pulse);
       }
@@ -464,7 +491,7 @@ void loop()
     // only set R_FLAG and re checksum then Serial.write()
     MySerial.println(F("return executed return packet."));
     //Resp[R_FLAG] |= 0; // error zero.
-    Resp[Resp_index-1] = get_checksum(Resp+P_ADDR, Resp_index-2);
+    Resp[Resp_index] = get_checksum(Resp+R_FLAG, Resp_index-R_FLAG);
 #ifdef DEBUG
     resp_dump();
 #endif
