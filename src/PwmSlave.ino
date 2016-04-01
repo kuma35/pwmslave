@@ -80,6 +80,9 @@
 #define LEN_SIZE 1
 #define SUM_SIZE 1
 
+#define P_SIG1 0xEF
+#define P_SIG2 0x65
+
 #define P_HDR_LEN (HEADER_SIZE+FLAG_SIZE+ADDR_SIZE+LEN_SIZE)
 
 #define P_HEADER 0
@@ -87,6 +90,9 @@
 #define P_ADDR (P_FLAG+FLAG_SIZE)
 #define P_LEN (P_ADDR+ADDR_SIZE)
 #define P_DATA (P_LEN+LEN_SIZE)
+
+#define R_SIG1 0xEF
+#define R_SIG2 0x66
 
 #define R_HEADER 0
 #define R_FLAG 2
@@ -281,8 +287,8 @@ void setup()
   //MySerial.println("NOW DEBUGGING20160328");
 #endif
   // set Resp header( minimum resp packet)
-  Resp[R_HEADER] = 0xEF;
-  Resp[R_HEADER+1] = 0x66;
+  Resp[R_HEADER] = R_SIG1;
+  Resp[R_HEADER+1] = R_SIG2;
   Resp[R_FLAG] = 0x00;	// FLag...0;all green.
   Resp[R_ADDR] = 0;
   Resp[R_LEN] = 0;
@@ -324,7 +330,7 @@ void loop()
 #ifdef DEBUG
     recv_dump();
 #endif
-    if (Recv[P_HEADER] != 0xEF || Recv[P_HEADER+1] != 0x65) {
+    if (Recv[P_HEADER] != P_SIG1 || Recv[P_HEADER+1] != P_SIG2) {
       drop_packet();
       Resp[2] |= ERR_PACKET;
       Resp[R_LEN+1] = get_checksum(Resp+P_ADDR, R_LEN);
@@ -428,31 +434,36 @@ void loop()
     
     // memory check and run
     for (int servo_id = 0; servo_id < 2; servo_id++) {
+      // attach
       int flag = order_attach(servo_id);
       if (flag != 0) {
 	if (!Sv[servo_id].attached()) {
 	  Sv[servo_id].attach(Memory[EEPROM_SERVO_0+servo_id]);
 	}
-	// writeMicrosecond only attached.
-	int pulse = get_pulse(servo_id);
-	int min = get_servo_min(servo_id);
-	int max = get_servo_max(servo_id);
-	if (pulse < min) {
-	  pulse = min;
-	} else if ( pulse > max) {
-	  pulse = max;
-	}
-	Sv[servo_id].writeMicroseconds(pulse);
       } else {
 	if (Sv[servo_id].attached()) {
 	  Sv[servo_id].detach();
 	}
       }
+
+      // pulse
+      if (Sv[servo_id].attached()) {
+	int pulse = get_pulse(servo_id);
+	int min = get_servo_min(servo_id);
+	int max = get_servo_max(servo_id);
+	if (pulse < min) {
+	  Resp[R_FLAG] |= WRN_UNDER_PULSE
+	  pulse = min;
+	} else if ( pulse > max) {
+	  pulse = max;
+	}
+	Sv[servo_id].writeMicroseconds(pulse);
+      }
     }
-    // post execut status to resp.
+    // post execute status to resp.
     // only set R_FLAG and re checksum then Serial.write()
     MySerial.println(F("return executed return packet."));
-    Resp[R_FLAG] = 0; // error zero.
+    //Resp[R_FLAG] |= 0; // error zero.
     Resp[Resp_index-1] = get_checksum(Resp+P_ADDR, Resp_index-2);
 #ifdef DEBUG
     resp_dump();
